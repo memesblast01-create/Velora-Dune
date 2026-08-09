@@ -173,7 +173,7 @@
     var el = document.createElement("div");
     el.className = "vd-msg " + (role === "user" ? "vd-user" : "vd-bot");
     el.textContent = content; // never innerHTML — content is always plain text
-    if (sources && sources.length) {
+    if (false) {
       var srcEl = document.createElement("div");
       srcEl.className = "vd-sources";
       srcEl.textContent =
