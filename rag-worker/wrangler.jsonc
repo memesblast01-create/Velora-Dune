@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "velora-dune-rag",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Workers AI — used at query time to embed the user's question
+  // (@cf/baai/bge-base-en-v1.5) with the same model used at ingest time.
+  "ai": {
+    "binding": "AI"
+  },
+
+  // Vectorize index holding the Velora Dune knowledge-base embeddings.
+  // Create with: npx wrangler vectorize create velora-dune-kb --dimensions=768 --metric=cosine
+  "vectorize": [
+    {
+      "binding": "VECTORIZE_INDEX",
+      "index_name": "velora-dune-kb"
+    }
+  ],
+
+  // KV namespace used purely for sliding-window rate limiting.
+  // Create with: npx wrangler kv namespace create RATE_LIMIT_KV
+  "kv_namespaces": [
+    {
+      "binding": "RATE_LIMIT_KV",
+      "id": "c1066e56cab94c109e3d5380a3a2993d"
+    }
+  ],
+
+  // R2 bucket that archives the source PDF (audit trail / re-ingestion).
+  // Create with: npx wrangler r2 bucket create velora-dune-kb-source
+
+  "vars": {
+    // Comma-separated list of origins allowed to call this Worker's API.
+    "ALLOWED_ORIGINS": "https://velora-dune.vercel.app",
+
+    // Workers AI text-generation model used for the final answer. No
+    // external API key needed — this runs on Cloudflare's own inference,
+    // billed through your Cloudflare account like everything else here.
+    "GENERATION_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+
+    // Retrieval tuning (see README for rationale).
+    "RETRIEVAL_TOP_K": "5",
+    "SIMILARITY_THRESHOLD": "0.72",
+
+    // Abuse / cost guards.
+    "MAX_MESSAGE_LENGTH": "500",
+    "MAX_HISTORY_TURNS": "6",
+    "MAX_ANSWER_TOKENS": "600",
+    "RATE_LIMIT_PER_MINUTE": "15",
+    "RATE_LIMIT_PER_DAY": "100"
+  }
+
+  // No secrets required — Workers AI is a first-party binding (env.AI),
+  // not a credential, so there is no provider API key anywhere in this
+  // project to protect or rotate.
+}
