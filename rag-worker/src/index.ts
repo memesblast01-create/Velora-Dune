@@ -9,14 +9,7 @@ import {
 } from "./lib/security";
 import { retrieveContext } from "./lib/retrieval";
 import { buildUserTurn, SYSTEM_PROMPT } from "./lib/prompt";
-
-/**
- * Generation model, hosted on Workers AI — no external LLM provider or
- * secret key required. Llama 3.3 70B is a strong, instruction-following
- * open model available on Workers AI at low per-token cost; swap the
- * string below (env.GENERATION_MODEL) if you'd rather use a different
- * Workers AI text-generation model.
- */
+import { ensureReservationsTable, saveReservation, validateReservation } from "./lib/reservation";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -27,71 +20,92 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (url.pathname !== "/api/chat") {
+    if (url.pathname !== "/api/chat" && url.pathname !== "/api/reserve") {
       return new Response("Not found", { status: 404 });
     }
     if (request.method !== "POST") {
       return new Response("Method not allowed", { status: 405, headers: corsHeaders(origin) });
     }
 
-    // Reject cross-origin calls outright — the widget is the only intended caller.
     if (!origin) {
       return jsonError("Origin not allowed.", 403, null);
     }
 
-    try {
-      const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
-      await checkRateLimit(env, clientIp);
-
-      const rawBody = await request.json().catch(() => {
-        throw new ClientError("Request body must be valid JSON.");
-      });
-      const { message, history } = validateChatRequest(rawBody, env);
-
-      if (looksLikeInjectionAttempt(message)) {
-        // Answer honestly and helpfully without ever touching the LLM with
-        // this input, and without confirming/denying any internal detail.
-        return jsonOk(
-          {
-            answer:
-              "I'm just able to help with questions about Velora Dune — our menu, hours, location, dining experiences, and reservations. What would you like to know?",
-            sources: [],
-          },
-          origin
-        );
-      }
-
-      const chunks = await retrieveContext(env, message, history);
-
-      const userTurn = buildUserTurn(message, chunks);
-      const priorTurns = (history ?? []).map((t) => ({ role: t.role, content: t.content }));
-
-      const answer = await callWorkersAI(env, [
-        ...priorTurns,
-        { role: "user", content: userTurn },
-      ]);
-
-      const sources = dedupeSources(chunks.map((c) => ({ section: c.section, page: c.page })));
-
-      const body: ChatResponseBody = { answer, sources };
-      return jsonOk(body, origin);
-    } catch (err) {
-      if (err instanceof ClientError) {
-        return jsonError(err.message, err.status, origin);
-      }
-      // Safe logging: no message content, no secrets — just enough to debug.
-      console.error("chat_handler_error", { name: (err as Error)?.name });
-      return jsonError("Something went wrong on our end — please try again in a moment.", 500, origin);
+    if (url.pathname === "/api/reserve") {
+      return handleReserve(request, env, origin);
     }
+    return handleChat(request, env, origin);
   },
 };
 
-/**
- * Generation call via the Workers AI binding — runs entirely inside
- * Cloudflare's network. No provider API key exists anywhere in this
- * codebase because none is needed: env.AI is a first-party binding, not a
- * secret credential, so there's nothing here that could leak to the browser.
- */
+async function handleReserve(request: Request, env: Env, origin: string): Promise<Response> {
+  try {
+    const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    await checkRateLimit(env, clientIp);
+
+    const rawBody = await request.json().catch(() => {
+      throw new ClientError("Request body must be valid JSON.");
+    });
+    const reservation = validateReservation(rawBody);
+
+    await ensureReservationsTable(env);
+    await saveReservation(env, reservation);
+
+    return jsonOk(
+      {
+        answer:
+          "Thank you. Your reservation request has been received — our team will confirm shortly.",
+      },
+      origin
+    );
+  } catch (err) {
+    if (err instanceof ClientError) {
+      return jsonError(err.message, err.status, origin);
+    }
+    console.error("reserve_handler_error", { name: (err as Error)?.name });
+    return jsonError("Something went wrong on our end — please try again in a moment.", 500, origin);
+  }
+}
+
+async function handleChat(request: Request, env: Env, origin: string): Promise<Response> {
+  try {
+    const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    await checkRateLimit(env, clientIp);
+
+    const rawBody = await request.json().catch(() => {
+      throw new ClientError("Request body must be valid JSON.");
+    });
+    const { message, history } = validateChatRequest(rawBody, env);
+
+    if (looksLikeInjectionAttempt(message)) {
+      return jsonOk(
+        {
+          answer:
+            "I'm just able to help with questions about Velora Dune — our menu, hours, location, dining experiences, and reservations. What would you like to know?",
+          sources: [],
+        },
+        origin
+      );
+    }
+
+    const chunks = await retrieveContext(env, message, history);
+    const userTurn = buildUserTurn(message, chunks);
+    const priorTurns = (history ?? []).map((t) => ({ role: t.role, content: t.content }));
+
+    const answer = await callWorkersAI(env, [...priorTurns, { role: "user", content: userTurn }]);
+    const sources = dedupeSources(chunks.map((c) => ({ section: c.section, page: c.page })));
+
+    const body: ChatResponseBody = { answer, sources };
+    return jsonOk(body, origin);
+  } catch (err) {
+    if (err instanceof ClientError) {
+      return jsonError(err.message, err.status, origin);
+    }
+    console.error("chat_handler_error", { name: (err as Error)?.name });
+    return jsonError("Something went wrong on our end — please try again in a moment.", 500, origin);
+  }
+}
+
 async function callWorkersAI(
   env: Env,
   messages: Array<{ role: "user" | "assistant"; content: string }>

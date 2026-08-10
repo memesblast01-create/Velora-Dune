@@ -2,7 +2,7 @@ export interface Env {
   AI: Ai;
   VECTORIZE_INDEX: VectorizeIndex;
   RATE_LIMIT_KV: KVNamespace;
-  KB_SOURCE_BUCKET: R2Bucket;
+  RESERVATIONS_DB: D1Database;
 
   ALLOWED_ORIGINS: string;
   GENERATION_MODEL: string;
@@ -15,7 +15,6 @@ export interface Env {
   RATE_LIMIT_PER_DAY: string;
 }
 
-/** A single chat turn as sent by the widget. Never trusted as instructions. */
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;
@@ -26,7 +25,6 @@ export interface ChatRequestBody {
   history?: ChatTurn[];
 }
 
-/** Metadata stored alongside each vector in Vectorize. */
 export interface ChunkMetadata {
   document: string;
   section: string;
@@ -46,4 +44,14 @@ export interface RetrievedChunk {
 export interface ChatResponseBody {
   answer: string;
   sources: Array<{ section: string; page: number }>;
+}
+
+export interface ReservationRequestBody {
+  name: string;
+  email: string;
+  phone: string;
+  guests: string;
+  date: string;
+  time: string;
+  specialRequest?: string;
 }
